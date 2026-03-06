@@ -1,0 +1,50 @@
+# 05.03.2026
+
+from bs4 import BeautifulSoup
+import requests
+import time
+import sqlite3
+
+conn = sqlite3.connect("books.db")
+cursor = conn.cursor()
+cursor.execute('''CREATE TABLE IF NOT EXISTS books (
+id INTEGER PRIMARY KEY AUTOINCREMENT,
+name TEXT,
+price REAL,
+rating INTEGER
+)''')
+page = 1
+for page in range(1,11):
+    url = f"https://books.toscrape.com/catalogue/page-{page}.html"
+    request = requests.get(url)
+    soup = BeautifulSoup(request.content, 'html.parser')
+    books = soup.find_all("li", {"class": "col-xs-6 col-sm-4 col-md-3 col-lg-3"})
+
+    for book in books:
+
+        name = book.find("h3")
+        price = book.find("p", {"class": "price_color"})
+        price = float(price.text[1:])
+        time.sleep(1)
+
+        rating_one = book.find("p", {"class": "star-rating"})
+
+        if rating_one:
+            classes = rating_one.get('class')
+            rating_text = classes[1]
+            rating_map = {
+               "One": 1,
+                "Two": 2,
+                "Three": 3,
+                "Four": 4,
+                "Five": 5,
+            }
+            rating = rating_map.get(rating_text, 0)
+
+
+
+
+            cursor.execute("""INSERT INTO books (name, price, rating) VALUES (?,?,?)""",(name.text, price, rating))
+conn.commit()
+cursor.close()
+conn.close()
