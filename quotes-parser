@@ -1,3 +1,4 @@
+12.03.2026
 import requests
 from bs4 import BeautifulSoup
 import sqlite3
