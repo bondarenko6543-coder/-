@@ -1,1 +1,145 @@
+import requests
+from bs4 import BeautifulSoup
+import sqlite3
+import time
 
+#проверка на ошибки сети или не отвечает сайт
+def examination(url):
+    success = False
+    for eror in range(3):
+        response = requests.get(url, headers=headers, timeout=10)
+        try:
+            if response.status_code == 200:
+                success = True
+                break
+            elif response.status_code == 404:
+                print(eror + 1)
+                time.sleep(60)
+            else:
+                print(f'ошибка {response.status_code}')
+        except requests.exceptions.RequestException as e:
+            print(f'сетивая ошибка {e}')
+            time.sleep(10)
+    return success
+
+#переходим на категории находим все сылки на книги
+def link_to_books(url_categories):
+    books_url_all = []
+    if examination(url_categories) == True:
+        response = requests.get(url_categories, headers=headers, timeout=10)
+        soup = BeautifulSoup(response.content, 'html.parser')
+        books = soup.find_all('li', class_='col-xs-6 col-sm-4 col-md-3 col-lg-3')
+        for book in books:
+            books_url = book.find('h3').find('a')['href']
+            books_url = 'https://books.toscrape.com/catalogue' + str(books_url[8:])
+            books_url_all.append(books_url)
+        return books_url_all
+    else: return False
+
+#находи все нужные даные
+def result_books(books_url):
+    name_result = []
+    price_result = []
+    availability_result = []
+    rating_result = []
+    upc_result = []
+    Product_Information_result = []
+    for book_url in books_url:
+        if examination(book_url) == True:
+            response = requests.get(book_url, headers=headers, timeout=10)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            name = soup.find('div', class_='col-sm-6 product_main').find('h1')
+            price = soup.find('p', class_='price_color')
+            availability = soup.find('p', class_='instock availability')
+            upc = soup.find('table', class_='table table-striped').find('tr')
+            Product_Information = soup.find('article', class_='product_page').find_all('p')[3]
+            rating = soup.find('p', class_='star-rating')
+            classes = rating.get('class')
+            rating_text = classes[1]
+            rating_map = {
+                "One": 1,
+                "Two": 2,
+                "Three": 3,
+                "Four": 4,
+                "Five": 5,
+            }
+            rating = rating_map.get(rating_text, 0)
+            rating_result.append(rating)
+            name_result.append(name.text)
+            price_result.append(price.text[1:])
+            availability_result.append(availability.text.strip())
+            upc_result.append(upc.text[3:][:-2])
+            Product_Information_result.append(Product_Information.text)
+        else: return False
+    return name_result, price_result, availability_result, rating_result, upc_result, Product_Information_result, books_url
+
+#создаем таблицу
+conn = sqlite3.connect('books.db')
+c = conn.cursor()
+c.execute('''CREATE TABLE IF NOT EXISTS books (
+name TEXT,
+price REAL,
+availability TEXT,
+rating INTEGER,
+link TEXT,
+UPC TEXT,
+quantity INTEGER,
+UNIQUE(name, UPC)
+)''')
+
+full_url_categories = []
+for eror in range(1):
+    url = 'https://books.toscrape.com/catalogue/category/books_1/index.html'
+
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    response = requests.get(url, headers=headers, timeout=10)
+    result_chak = examination(response.url)
+    #проверка сылки
+    if result_chak == False:
+        print('ОШЫБКА!!!')
+        break
+        #если ок идем дальше
+    if result_chak:
+        soup = BeautifulSoup(response.content, 'html.parser')
+        categories = soup.find_all('ul', class_='nav nav-list')
+
+        number_of_pages = []
+
+        for cate in categories:
+            for cat in cate.find('li').find_all('li'):
+                number_of_pages.append(cat.find('a')['href'])
+        for page in range(len(number_of_pages)):
+            url_categories = 'https://books.toscrape.com/catalogue/category'+str(number_of_pages[page][2:])
+            response = requests.get(url_categories, headers=headers, timeout=10)
+            soup = BeautifulSoup(response.content, 'html.parser')
+            next_page = soup.find('li', class_='next')
+            full_url_categories.append(url_categories)
+            if next_page != None:
+                peg = 2
+                #если несколько листов страницы переходим на следуйшею
+                while True:
+                    url_categories_gwf = url_categories.replace("index.html", f"page-{peg}.html")
+                    response = requests.get(url_categories_gwf, headers=headers, timeout=10)
+                    soup = BeautifulSoup(response.content, 'html.parser')
+                    next_page = soup.find('li', class_='next')
+                    full_url_categories.append(url_categories_gwf)
+                    #print(result_books(link_to_books(url_categories)))
+                    peg += 1
+                    if next_page == None:
+                        break
+#цыкл для вставки даных
+for full_url_catego in full_url_categories:
+    vvv = examination(full_url_catego)
+    if vvv == True:
+        name_result, price_result, availability_result, rating_result, upc_result, Product_Information_result, quantity = result_books(link_to_books(full_url_catego))
+        for name, price, availability, rating, upc, Product_Information, quantity in zip(name_result, price_result, availability_result, rating_result, upc_result, Product_Information_result, quantity):
+            print(name, price, availability, rating, upc, Product_Information, quantity)
+            #добавляем дание в таблицу
+            c.execute('INSERT INTO books (name, price, availability, rating, link, UPC, quantity)'
+                        ' VALUES (?, ?, ?, ?, ?, ?, ?)',
+              (name, price, availability, rating, upc, Product_Information, quantity.strip()))
+    else:
+        print('error')
+#сохранняем
+conn.commit()
+conn.close()
